@@ -101,15 +101,11 @@
 #![stable(feature = "process", since = "1.0.0")]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-#[cfg(all(test, not(any(target_os = "emscripten", target_env = "sgx"))))]
-mod tests;
-
-use crate::io::prelude::*;
-
 use crate::convert::Infallible;
 use crate::ffi::OsStr;
 use crate::fmt;
 use crate::fs;
+use crate::io::prelude::*;
 use crate::io::{self, IoSlice, IoSliceMut};
 use crate::num::NonZeroI32;
 use crate::path::Path;
@@ -119,6 +115,9 @@ use crate::sys::process as imp;
 #[stable(feature = "command_access", since = "1.57.0")]
 pub use crate::sys_common::process::CommandEnvs;
 use crate::sys_common::{AsInner, AsInnerMut, FromInner, IntoInner};
+
+#[cfg(all(test, not(any(target_os = "emscripten", target_env = "sgx"))))]
+mod tests;
 
 /// Representation of a running or exited child process.
 ///
@@ -2205,6 +2204,21 @@ impl<T: Termination, E: fmt::Debug> Termination for Result<T, E> {
                 let _ = writeln!(io::stderr(), "Error: {err:?}");
                 ExitCode::FAILURE
             }
+        }
+    }
+}
+
+#[stable(feature = "termination_trait_lib", since = "CURRENT_RUSTC_VERSION")]
+impl<T: fmt::Debug + Termination> Termination for Option<T> {
+    fn report(self) -> ExitCode {
+        match self {
+            Some(err) => {
+                // Ignore error if the write fails, for example because stderr is
+                // already closed. There is not much point panicking at this point.
+                drop(writeln!(io::stderr(), "Error: {err:?}"));
+                err.report()
+            }
+            None => ExitCode::FAILURE,
         }
     }
 }
