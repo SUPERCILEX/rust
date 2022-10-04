@@ -2202,8 +2202,23 @@ impl<T: Termination, E: fmt::Debug> Termination for Result<T, E> {
             Err(err) => {
                 // Ignore error if the write fails, for example because stderr is
                 // already closed. There is not much point panicking at this point.
-                let _ = writeln!(io::stderr(), "Error: {err:?}");
+                drop(writeln!(io::stderr(), "Error: {err:?}"));
                 ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+#[stable(feature = "termination_trait_lib_err", since = "CURRENT_RUSTC_VERSION")]
+impl<T: Termination, E: fmt::Debug + Termination> Termination for Result<T, E> {
+    fn report(self) -> ExitCode {
+        match self {
+            Ok(val) => val.report(),
+            Err(err) => {
+                // Ignore error if the write fails, for example because stderr is
+                // already closed. There is not much point panicking at this point.
+                drop(writeln!(io::stderr(), "Error: {err:?}"));
+                err.report()
             }
         }
     }
