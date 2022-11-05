@@ -35,7 +35,8 @@
 //!   be used for inter-thread synchronization.
 //! * The result of casting a reference to a pointer is valid for as long as the
 //!   underlying object is live and no reference (just raw pointers) is used to
-//!   access the same memory.
+//!   access the same memory. That is, reference and pointer accesses cannot be
+//!   interleaved—they must follow stacked borrows.
 //!
 //! These axioms, along with careful use of [`offset`] for pointer arithmetic,
 //! are enough to correctly implement many useful things in unsafe code. Stronger guarantees
@@ -64,6 +65,15 @@
 //! separate allocated object), heap allocations (each allocation created by the global allocator is
 //! a separate allocated object), and `static` variables.
 //!
+//! ## A note on read vs. write invariants
+//!
+//! Both the pointer and the pointee's invariants must be satisfied when reading from a pointer,
+//! but only the pointer's invariants must be satisfied when writing. It is not considered UB to write
+//! data that violates a type's invariants so long as the type's invariants are satisfied by the time
+//! it is read, either through the raw pointer or the reference it originated from. This means a type
+//! may freely transition between valid and invalid states when being written to by raw pointers.
+//! Thus, when discussing safety, it may be useful to separately assert the validity of the pointer vs.
+//! the validity of the data it points to.
 //!
 //! # Strict Provenance
 //!
