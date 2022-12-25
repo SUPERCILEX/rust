@@ -8,25 +8,34 @@ pub struct Condvar {
     // This is used by `.wait()` to not miss any notifications after
     // unlocking the mutex and before waiting for notifications.
     futex: AtomicU32,
+    // The condvar will be permanently broken if the number of waiters exceeds a u32,
+    // but that would require having 2^32 threads which I'm going to say is not possible.
+    // Furthermore, calls like notify_all only support waking up u32::MAX waiters so
+    // this limit is fairly pervasive.
+    waiters: AtomicU32,
 }
 
 impl Condvar {
     #[inline]
     pub const fn new() -> Self {
-        Self { futex: AtomicU32::new(0) }
+        Self { futex: AtomicU32::new(0), waiters: AtomicU32::new(0) }
     }
 
     // All the memory orderings here are `Relaxed`,
     // because synchronization is done by unlocking and locking the mutex.
 
     pub fn notify_one(&self) {
-        self.futex.fetch_add(1, Relaxed);
-        futex_wake(&self.futex);
+        if self.waiters.load(Relaxed) > 0 {
+            self.futex.fetch_add(1, Relaxed);
+            futex_wake(&self.futex);
+        }
     }
 
     pub fn notify_all(&self) {
-        self.futex.fetch_add(1, Relaxed);
-        futex_wake_all(&self.futex);
+        if self.waiters.load(Relaxed) > 0 {
+            self.futex.fetch_add(1, Relaxed);
+            futex_wake_all(&self.futex);
+        }
     }
 
     pub unsafe fn wait(&self, mutex: &Mutex) {
@@ -41,12 +50,22 @@ impl Condvar {
         // Examine the notification counter _before_ we unlock the mutex.
         let futex_value = self.futex.load(Relaxed);
 
+        // Register ourselves as waiting _before_ unlocking the mutex since self.futex++
+        // only occurs if there's a waiter. The order between this line and the prior is
+        // irrelevant since they're both backed by the mutex.
+        self.waiters.fetch_add(1, Relaxed);
+
         // Unlock the mutex before going to sleep.
         mutex.unlock();
 
         // Wait, but only if there hasn't been any
         // notification since we unlocked the mutex.
         let r = futex_wait(&self.futex, futex_value, timeout);
+
+        // We're no longer waiting: do this as soon as possible to avoid spurious wake calls.
+        // Note that calling futex_wake unnecessarily has no effect on correctness,
+        // just performance.
+        self.waiters.fetch_sub(1, Relaxed);
 
         // Lock the mutex again.
         mutex.lock();
